@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Color - Order Activity (Fixed Validation)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  body{font-family:Arial,Helvetica,sans-serif; background:#f0f4f8; margin:0; padding:20px; text-align:center}
+  h1{color:#333;margin:8px 0}
+  p{color:#555;margin:6px 0 18px}
+  iframe{max-width:100%; border:0; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,.08)}
+  #inputs-container{
+    display:grid;
+    grid-template-columns:repeat(6,1fr);
+    gap:14px;
+    max-width:920px;
+    margin:20px auto 8px;
+    justify-items:center;
+  }
+  .color-input{
+    width:150px;
+    padding:12px;
+    font-size:1rem;
+    border:2px solid #333;
+    border-radius:8px;
+    text-align:center;
+    font-weight:700;
+    color:black;
+    transition:background .25s, border-color .25s;
+    box-sizing:border-box;
+  }
+  .color-input.correct{ border-color:green; color:black; }
+  .color-input.error { border-color: #e53935; }
+  #message{min-height:28px; font-weight:700; margin:14px 0; display:block}
+  #good-job{font-size:2.6rem;color:green;font-weight:900;margin-top:14px;display:none}
+  .action-btn{padding:10px 18px;border-radius:8px;border:none;background:#2196F3;color:#fff;font-weight:700;cursor:pointer}
+  .start-btn{background:#4caf50}
+  canvas{position:fixed;inset:0;pointer-events:none;display:none}
+  @media(max-width:760px){ #inputs-container{grid-template-columns:repeat(3,1fr)} .color-input{width:110px} iframe{height:260px} }
+</style>
+</head>
+<body>
+
+<div id="start-screen">
+  <h1>Color - Order Activity</h1>
+  <p>Watch the video and write the Spanish names of the colors in the fixed order (Color 1 → Color 11). Validation happens when you complete each word (or press Enter).</p>
+  <button class="action-btn start-btn" onclick="startGame()">Start</button>
+</div>
+
+<div id="game-screen" style="display:none">
+  <h1>Color - Order Activity</h1>
+  <iframe id="activity-video" src="https://player.vimeo.com/video/1114304316" width="800" height="450" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>
+
+  <div id="inputs-container" aria-label="Color inputs"></div>
+
+  <div id="message" aria-live="polite"></div>
+  <div id="good-job">GOOD JOB!</div>
+
+  <div style="margin-top:14px">
+    <button class="action-btn" onclick="restartGame()">Restart</button>
+  </div>
+</div>
+
+<canvas id="confetti-canvas"></canvas>
+
+<script>
+/* fixed order */
+const correctOrder = [
+  "Amarillo","Azul","Rojo","Blanco","Negro",
+  "Verde","Gris","Naranja","Púrpura","Rosado","Marrón"
+];
+
+/* color codes (map using normalized keys) */
+const rawColorMap = {
+  "Amarillo":"#FFEB3B","Azul":"#2196F3","Rojo":"#F44336","Blanco":"#FFFFFF",
+  "Negro":"#212121","Verde":"#4CAF50","Gris":"#9E9E9E","Naranja":"#FF9800",
+  "Púrpura":"#9C27B0","Rosado":"#FFB6C1","Marrón":"#795548"
+};
+
+/* normalize: remove accents, lowercase, trim */
+function normalizeText(s){
+  if(!s) return "";
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+}
+
+/* build colorMap normalized */
+const colorMap = {};
+for(const k in rawColorMap) colorMap[ normalizeText(k) ] = rawColorMap[k];
+
+let confettiInterval = null;
+
+/* UI control */
+function startGame(){
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('game-screen').style.display = 'block';
+  buildInputs();
+}
+
+function restartGame(){
+  stopConfetti();
+  document.getElementById('good-job').style.display = 'none';
+  document.getElementById('message').textContent = '';
+  buildInputs();
+}
+
+/* create inputs */
+function buildInputs(){
+  const container = document.getElementById('inputs-container');
+  container.innerHTML = '';
+  document.getElementById('message').textContent = '';
+  correctOrder.forEach((label, idx) => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Color ' + (idx+1);
+    input.className = 'color-input';
+    input.dataset.index = idx;
+
+    // validate on input completion or Enter
+    input.addEventListener('input', (e) => onTyping(e.target, idx));
+    input.addEventListener('keydown', (e) => {
+      if(e.key === 'Enter'){
+        e.preventDefault();
+        checkComplete(input, idx, true); // force check even if shorter
+      }
+    });
+
+    container.appendChild(input);
+  });
+
+  // focus first input
+  const first = container.querySelector('.color-input');
+  if(first) first.focus();
+}
+
+/* handle typing: only validate when length >= correct length OR when user pasted longer text */
+function onTyping(input, idx){
+  // remove any error class while typing
+  input.classList.remove('error');
+
+  const val = normalizeText(input.value);
+  const correct = normalizeText(correctOrder[idx]);
+
+  // if exactly same length (user finished typing last letter) or longer (pasted),
+  // then check; otherwise wait until user completes
+  if(val.length === correct.length || val.length > correct.length){
+    checkComplete(input, idx, false);
+  }
+}
+
+/* checkComplete: validate the current input.
+   forceCheck=true allows checking even if shorter (triggered by Enter) */
+function checkComplete(input, idx, forceCheck){
+  const message = document.getElementById('message');
+  const raw = input.value;
+  const val = normalizeText(raw);
+  const correct = normalizeText(correctOrder[idx]);
+
+  // if empty do nothing
+  if(val.length === 0 && !forceCheck){
+    return;
+  }
+
+  // if matches exactly -> accept
+  if(val === correct){
+    acceptCorrect(input, idx);
+    return;
+  }
+
+  // if forced check (Enter) OR length >= correct length -> error
+  if(forceCheck || val.length >= correct.length){
+    // show error
+    message.textContent = 'Error, try again!';
+    message.style.color = 'red';
+
+    // visual error on this cell
+    input.classList.add('error');
+
+    // small delay so user sees what they typed
+    setTimeout(() => {
+      input.value = '';
+      input.classList.remove('error');
+      input.focus();
+      // clear message after short time (optional)
+      // setTimeout(()=>{ message.textContent = ''; }, 900);
+    }, 150);
+  }
+  // else (shorter and not forced) -> do nothing (user is still typing)
+}
+
+/* accept correct answer */
+function acceptCorrect(input, idx){
+  const message = document.getElementById('message');
+  message.textContent = 'Correct!';
+  message.style.color = 'green';
+
+  // set displayed value to canonical (accented) form and keep text black
+  input.value = correctOrder[idx];
+  input.classList.add('correct');
+  input.disabled = true;
+
+  // paint background color if available
+  const norm = normalizeText(correctOrder[idx]);
+  const colorCode = colorMap[norm];
+  if(colorCode){
+    input.style.background = colorCode;
+    // keep text color black as requested
+    input.style.color = 'black';
+  }
+
+  // move focus to next input (if exists)
+  const nextIndex = idx + 1;
+  const next = document.querySelector('.color-input[data-index="'+nextIndex+'"]');
+  if(next){
+    next.focus();
+  } else {
+    // finished all
+    document.getElementById('good-job').style.display = 'block';
+    startConfetti();
+    setTimeout(()=>{ document.getElementById('message').textContent = ''; }, 900);
+  }
+}
+
+/* confetti */
+function startConfetti(){
+  const canvas = document.getElementById('confetti-canvas');
+  canvas.style.display = 'block';
+  const ctx = canvas.getContext('2d');
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  const pieces = Array.from({length:200}, () => ({
+    x: Math.random()*canvas.width,
+    y: Math.random()*-canvas.height,
+    r: Math.random()*6+3,
+    d: Math.random()*10+5,
+    col: `hsl(${Math.random()*360},90%,60%)`
+  }));
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    pieces.forEach(p=>{
+      ctx.fillStyle = p.col;
+      ctx.fillRect(p.x, p.y, p.r+2, p.r+6);
+    });
+    pieces.forEach(p=>{
+      p.y += Math.cos(p.d)+p.r/2+2;
+      if(p.y > canvas.height){ p.y = -20; p.x = Math.random()*canvas.width; }
+    });
+  }
+  if(confettiInterval) clearInterval(confettiInterval);
+  confettiInterval = setInterval(draw, 20);
+}
+function stopConfetti(){
+  const canvas = document.getElementById('confetti-canvas');
+  if(confettiInterval) clearInterval(confettiInterval);
+  confettiInterval = null;
+  canvas.style.display = 'none';
+}
+</script>
+</body>
+</html>
